@@ -10,10 +10,11 @@
  *  - R/W diplay of each register getModelDependencyFuncInfo
  *  - min/max of each register getModelDependencyFuncInfo
  *  - keyboard
+ *    - add float capability
  *  - dynamixel factory restore
  *  - add model number on the info page
  *  - eeprom the protocol and value
- *  - 
+ *  - test
  */
 // Screen
 #include "SPI.h"
@@ -71,6 +72,7 @@ float protocol = 1.0;
 
 float motorRegisterDecimals = 0.0;
 int currentRegister = 0;
+int registerData = 0;
 int motorRegister = 0;
 int currentMotor = 0;
 int motorIndex = 0;
@@ -127,29 +129,25 @@ void loop(){
 
   if(refreshMillis>refreshInterval){
     refreshMillis = 0;
-    if( (CurrentScreen == 1) & (motorIndex > 0)){		// Scan/Select Motor Screen
-      motorPing(motorID);
-      displayMotorInfo(motorIndex);
-    }
-    
-    if( (CurrentScreen == 2) & (motorIndex > 0)){				// Configure Motor Screen
-    	motorPing(motorID);
-  
-    	//displayPutStr(" Over Heating Error! ",252,34,0,dataColorError,dataBarColor);
-    	//tft.fillRect(207,139,10,14,RED);
-    }
-    
-    if( (CurrentScreen == 3) & (motorIndex > 0)){				// Reset Motor Screen
-    	motorPing(motorID);
-    }
-    
-    if (CurrentScreen == 4){ //baudrate && protocol && calibration
-    	displayPutStr(Baudrates[currentBaudrate],112,8,2,dataColor,dataBarColor);
-    	if( protocol == 1){
-    		displayPutStr("1.0",188,8,2,dataColor,dataBarColor);
-    	}else if(protocol == 2){
-    		displayPutStr("2.0",188,8,2,dataColor,dataBarColor);
-    	}
+    switch(CurrentScreen){
+      case 1:               // Scan/Select Motor Screen
+        if(motorIndex > 0){
+          displayMotorInfo(motorIndex);
+        }
+      case 2:               // Register Screen
+      case 3:               // Factory restore Screen
+        if(motorIndex > 0){		
+          motorPing(motorID);          
+        }
+        break;
+      case 4:                //baudrate && protocol && calibration
+      	displayPutStr(Baudrates[currentBaudrate],112,8,2,dataColor,dataBarColor);
+      	if( protocol == 1){
+      		displayPutStr("1.0",188,8,2,dataColor,dataBarColor);
+      	}else if(protocol == 2){
+      		displayPutStr("2.0",188,8,2,dataColor,dataBarColor);
+      	}
+       break;
     }
   }
   
@@ -207,7 +205,9 @@ void loop(){
         break;
       case 2: /* Register Screen */
         if(p.y > bot1Y1 && p.y < bot1Y2 && p.x > bot1X1 && p.x < bot1X2){
-          displayScanMotors();        // Start motor search
+          dxl.writeControlTableItem(currentRegister, motorID, registerData);
+          displayRegisterScreen();    // Display Register Screen
+          displayMotorStatus();       // Display motor status
         }
         if(p.y > bot2Y1 && p.y < bot2Y2 && p.x > bot2X1 && p.x < bot2X2){
           displayMotorStatus();        // Display motor status
@@ -222,7 +222,19 @@ void loop(){
           displayMainScreen();        // Display Main menu
           dxl.ledOff(BROADCAST_ID);   // Turn off all motors LED
         }
-        keyboardTouch();
+        int keyValue = keyboardTouch();
+        //display value typed
+        if(keyValue != -2){
+          if(keyValue == -1){ // backspace
+            registerData = registerData/10;
+          }
+          else{
+            registerData = registerData*10+keyValue;
+          }
+          itoa(registerData,motorRegisterStr,10);
+          strcpy(motorRegisterBuffer,motorRegisterStr);
+          displayPutStr(motorRegisterBuffer,100,4,2,dataColor,dataBarColor); 
+        }
         break;
       case 3: /* Reset Screen */
         if(p.y > bot1Y1 && p.y < bot1Y2 && p.x > bot1X1 && p.x < bot1X2){
@@ -568,9 +580,40 @@ void displayPutStr(const char *pString, uint16_t x, uint16_t y, uint8_t Size, ui
 }
 
 int keyboardTouch(){
-  if(p.y > bot3Y1 && p.y < bot3Y2 && p.x > bot3X1 && p.x < bot3X2){
-    
+  if(p.y > 255 && p.y < 280 && p.x > 80 && p.x < 160){
+    return 0;
   }
+  if(p.y > 160 && p.y < 190 && p.x > 0 && p.x < 80){
+    return 1;
+  }
+  if(p.y > 160 && p.y < 190 && p.x > 80 && p.x < 160){
+    return 2;
+  }
+  if(p.y > 160 && p.y < 190 && p.x > 160 && p.x < 240){
+    return 3;
+  }
+  if(p.y > 190 && p.y < 220 && p.x > 0 && p.x < 80){
+    return 4;
+  }
+  if(p.y > 190 && p.y < 220 && p.x > 80 && p.x < 160){
+    return 5;
+  }
+  if(p.y > 190 && p.y < 220 && p.x > 160 && p.x < 240){
+    return 6;
+  }
+  if(p.y > 220 && p.y < 255 && p.x > 0 && p.x < 80){
+    return 7;
+  }
+  if(p.y > 220 && p.y < 255 && p.x > 80 && p.x < 160){
+    return 8;
+  }
+  if(p.y > 220 && p.y < 255 && p.x > 160 && p.x < 240){
+    return 9;
+  }
+  if(p.y > 255 && p.y < 280 && p.x > 160 && p.x < 240){
+    return -1; // backspace
+  }
+  return -2; //nothing
 }
 
 void checkModel(int motorID){
