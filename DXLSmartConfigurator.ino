@@ -3,7 +3,8 @@
  * Modification:
  *  - bring to Arduino IDE instead of Eclipse
  *  - Use a Teensy 4.0 instead of the MK26F
- *  - Use a touch screen instead of the switch -> from the ST7789V to the ILI9341
+ *  - Use a touch screen instead of the switchs 
+ *  - change the screen from the ST7789V to the ILI9341 320x240
  *  - Use the Dynamixel2Arduino library instead of custom one
  * To do:
  *  - check if register exist for this model
@@ -15,6 +16,8 @@
  *  - add model number on the info page
  *  - eeprom the protocol and value
  *  - animations
+ *  - same interface on the serial port to be able to loose the screen
+ *  - protocol and baudrate multiselect + multiscan
  *  - test
  */
 // Screen
