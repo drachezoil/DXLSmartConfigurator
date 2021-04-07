@@ -5,6 +5,7 @@
 #ifndef INTERFACE_H_
 #define INTERFACE_H_
 
+const uint16_t mainSize = 100;
 
 const uint16_t scanY1 = 64;
 const uint16_t scanY2 = 164;

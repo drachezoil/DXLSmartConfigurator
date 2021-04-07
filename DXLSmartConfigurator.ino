@@ -14,14 +14,14 @@
  *  - dynamixel factory restore
  *  - add model number on the info page
  *  - eeprom the protocol and value
+ *  - animations
  *  - test
  */
 // Screen
 #include "SPI.h"
 #include "ILI9341_t3.h"
-#include <Adafruit_STMPE610.h>
+#include "TouchScreen.h"
 // GRAPHICS:
-#include "Splashscreen.h"
 #include "Interface.h"
 #include "Animations.h"
 //Dynamixel
@@ -34,31 +34,29 @@ const uint8_t BROADCAST_ID = 254;
 Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 using namespace ControlTableItem;
 
-// This is calibration data for the raw touch data to the screen coordinates
-#define TS_MINX 150
-#define TS_MINY 130
-#define TS_MAXX 3800
-#define TS_MAXY 4000
-
-// The STMPE610 uses hardware SPI on the shield, and #8
-#define STMPE_CS 8
-Adafruit_STMPE610 ts = Adafruit_STMPE610(STMPE_CS);
-
 // TFT pins
-const uint8_t TFT_DC = 9;
+const uint8_t TFT_DC = 14;
 const uint8_t TFT_CS = 10;
-const uint8_t MIC_PIN = 14;
-const uint8_t BACKLIGHT_PIN = 23;
+//const uint8_t MIC_PIN = 14;
+//const uint8_t BACKLIGHT_PIN = 23;
 // Use hardware SPI (#13, #12, #11) and the above for CS/DC
 ILI9341_t3 tft = ILI9341_t3(TFT_CS, TFT_DC);
 
-#define YP	0
-#define	XP	1
-#define YM	2
-#define XM	3
+#define YP	A9
+#define	XP	A8
+#define YM	A7
+#define XM	A6
+TouchScreen ts = TouchScreen(XP, YP, XM, YM, 300);
+// This is calibration data for the raw touch data to the screen coordinates
+#define TS_MINX 90
+#define TS_MINY 70
+#define TS_MAXX 940
+#define TS_MAXY 920
+#define MINPRESSURE 10
+#define MAXPRESSURE 1000
 
 #define BACKGROUND		  ILI9341_BLACK
-#define dataBarColor	  ILI9341_LIGHTGREY 
+#define dataBarColor	  ILI9341_DARKGREY 
 #define dataColor		    ILI9341_WHITE
 #define dataColorError	ILI9341_RED
 
@@ -92,8 +90,13 @@ uint8_t CurrentScreen = 0;
 uint8_t keyboardEnabled = 0;
 uint8_t lockStatus = 1;
 uint8_t motorID = 0;
+int8_t keyValue = -2;
 
-TS_Point p;
+TSPoint p;
+
+Adafruit_GFX_Button buttonsMain[4];
+Adafruit_GFX_Button buttonsBot[4];
+Adafruit_GFX_Button buttonsKey[11];
 
 void displayMainScreen();
 void displayScanScreen();
@@ -105,6 +108,8 @@ void displayMotorStatus();
 
 elapsedMillis refreshMillis = 0;
 unsigned long refreshInterval = 500; //refresh ping and status every 500ms
+elapsedMillis refreshTouchMillis = 0;
+unsigned long refreshTouchInterval = 50;
 
 void setup() {
   // Init DXL
@@ -112,14 +117,31 @@ void setup() {
   dxl.setPortProtocolVersion(protocol);	
   	
 	// Initialization for TFT Display 
-  pinMode( BACKLIGHT_PIN, OUTPUT );
-  analogWrite( BACKLIGHT_PIN, 1023 );
   tft.begin();
-  tft.setRotation( 3 );
+  tft.setRotation( 2 );
   tft.fillScreen(ILI9341_BLACK);
   
-	tft.writeRect(0,0,240,320,(uint16_t*)StartScreen);					// Display SplashScreen
-	delay(3000);											// Wait for SplashScreen
+  buttonsMain[0].initButton(&tft, scanX1+(mainSize/2), scanY1+(mainSize/2), mainSize, mainSize, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsMain[1].initButton(&tft, regX1+(mainSize/2), regY1+(mainSize/2), mainSize, mainSize, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsMain[2].initButton(&tft, resetX1+(mainSize/2), resetY1+(mainSize/2), mainSize, mainSize, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsMain[3].initButton(&tft, configX1+(mainSize/2), configY1+(mainSize/2), mainSize, mainSize, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  
+  buttonsBot[0].initButton(&tft, bot1X1+(60/2), bot1Y1+(32/2), 60, 32, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsBot[1].initButton(&tft, bot2X1+(60/2), bot2Y1+(32/2), 60, 32, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsBot[2].initButton(&tft, bot3X1+(60/2), bot3Y1+(32/2), 60, 32, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsBot[3].initButton(&tft, bot4X1+(60/2), bot4Y1+(32/2), 60, 32, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  
+  buttonsKey[0].initButton(&tft, 80+(80/2),   255+(25/2), 80, 25, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[1].initButton(&tft, 0+(80/2),    160+(30/2), 80, 30, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[2].initButton(&tft, 80+(80/2),   160+(30/2), 80, 30, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[3].initButton(&tft, 160+(80/2),  160+(30/2), 80, 30, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[4].initButton(&tft, 0+(80/2),    190+(30/2), 80, 30, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[5].initButton(&tft, 80+(80/2),   190+(30/2), 80, 30, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[6].initButton(&tft, 160+(80/2),  190+(30/2), 80, 30, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[7].initButton(&tft, 0+(80/2),    220+(25/2), 80, 25, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[8].initButton(&tft, 80+(80/2),   220+(25/2), 80, 25, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[9].initButton(&tft, 160+(80/2),  220+(25/2), 80, 25, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
+  buttonsKey[10].initButton(&tft, 160+(80/2), 255+(25/2), 80, 25, BACKGROUND,BACKGROUND,BACKGROUND,"",1);
 
 	displayMainScreen();									// Display main menu screen
 
@@ -133,97 +155,140 @@ void loop(){
       case 1:               // Scan/Select Motor Screen
         if(motorIndex > 0){
           displayMotorInfo(motorIndex);
+          motorPing(motorID); 
         }
+        break;
       case 2:               // Register Screen
+        if(motorIndex > 0){    
+          motorPing(motorID);          
+        }
+        break;
       case 3:               // Factory restore Screen
         if(motorIndex > 0){		
           motorPing(motorID);          
         }
         break;
       case 4:                //baudrate && protocol && calibration
-      	displayPutStr(Baudrates[currentBaudrate],112,8,2,dataColor,dataBarColor);
+      	displayPutStr(Baudrates[currentBaudrate],8,112,2,dataColor,dataBarColor);
       	if( protocol == 1){
-      		displayPutStr("1.0",188,8,2,dataColor,dataBarColor);
+      		displayPutStr("1.0",8,188,2,dataColor,dataBarColor);
       	}else if(protocol == 2){
-      		displayPutStr("2.0",188,8,2,dataColor,dataBarColor);
+      		displayPutStr("2.0",8,188,2,dataColor,dataBarColor);
       	}
        break;
     }
   }
-  
-  if (ts.touched()) {
-    // Retrieve a point  
-    p = ts.getPoint();
-    // Scale from ~0->4000 to tft.width using the calibration #"s
-    p.x = map(p.x, TS_MINX, TS_MAXX, 0, tft.width());
-    p.y = map(p.y, TS_MINY, TS_MAXY, 0, tft.height());
+
+  if(refreshTouchMillis>refreshTouchInterval){
+    refreshTouchMillis = 0;
+    p = ts.getPoint(); 
+    if(p.z==0){
+      p.x = p.y = p.z = -1;
+    }
+    // Scale using the calibration #'s
+    if (p.z > MINPRESSURE && p.z < MAXPRESSURE) {
+      Serial.print("("); Serial.print(p.x); Serial.print(", "); 
+      Serial.print(p.y); Serial.print(")\t"); 
+      //Serial.print(p.z); Serial.println(") ");
+      p.x = map(constrain(p.x, TS_MINX, TS_MAXX), TS_MAXX, TS_MINX, 0, 240);
+      p.y = map(constrain(p.y, TS_MINY, TS_MAXY), TS_MAXY, TS_MINY, 0, 320);
+      Serial.print("("); Serial.print(p.x); Serial.print(", "); 
+      Serial.print(p.y); Serial.println(") "); 
+    }
+    
+    for (uint8_t b=0; b<4; b++) {
+      if (buttonsMain[b].contains(p.x, p.y)) {
+        Serial.print("Pressing Main: "); Serial.println(b);
+        buttonsMain[b].press(true);  // tell the button it is pressed
+      } else {
+        buttonsMain[b].press(false);  // tell the button it is NOT pressed
+      }
+      if (buttonsBot[b].contains(p.x, p.y)) {
+        Serial.print("Pressing bot: "); Serial.println(b);
+        buttonsBot[b].press(true);  // tell the button it is pressed
+      } else {
+        buttonsBot[b].press(false);  // tell the button it is NOT pressed
+      }
+    }
+    for (uint8_t b=0; b<11; b++) {
+      if (buttonsKey[b].contains(p.x, p.y)) {
+        Serial.print("Pressing Key: "); Serial.println(b);
+        buttonsKey[b].press(true);  // tell the button it is pressed
+      } else {
+        buttonsKey[b].press(false);  // tell the button it is NOT pressed
+      }
+    }
+
     switch(CurrentScreen){
       case 0: /* Main Screen - Menu Screen */
-        if(p.y > scanY1 && p.y < scanY2 && p.x > scanX1 && p.x < scanX2){
+        if(buttonsMain[0].justReleased()){
           CurrentScreen = 1;          // Main Menu to Scan Screen
           displayScanScreen();        // Display Scan screen
           displayScanMotors();        // Start motor search
-        }
-        if(p.y > regY1 && p.y < regY2 && p.x > regX1 && p.x < regX2){
+          Serial.println("Scan");
+        }else if(buttonsMain[1].justReleased()){
           CurrentScreen = 2;          // Main Menu to Register Screen
           displayRegisterScreen();    // Display Register Screen
           displayMotorStatus();       // Display motor status
-        }
-        if(p.y > resetY1 && p.y < resetY2 && p.x > resetX1 && p.x < resetX2){
+          Serial.println("Register");
+        }else if(buttonsMain[2].justReleased()){
           CurrentScreen = 3;          // Main Menu to Reset Screen
           displayRestoreScreen(1);    // Display Reset Screen
           displayMotorStatus();       // Display motor status
-        }
-        if(p.y > configY1 && p.y < configY2 && p.x > configX1 && p.x < configX2){
+          Serial.println("Reset");
+        }else if(buttonsMain[3].justReleased()){
           CurrentScreen = 4;            // Main Menu to Config Screen
           displayConfigScreen();        // Display Configuration Screen
+          Serial.println("Config");
         }
         break;
       case 1: /* Scan Screen */
-        if(p.y > bot1Y1 && p.y < bot1Y2 && p.x > bot1X1 && p.x < bot1X2){
+        if(buttonsBot[0].justReleased()){
           displayScanMotors();        // Start motor search
-        }
-        if(p.y > bot2Y1 && p.y < bot2Y2 && p.x > bot2X1 && p.x < bot2X2){
+          Serial.println("Search");
+        }else if(buttonsBot[1].justReleased()){
           displayMotorStatus();        // Display motor status
           if(currentMotor > 0)
             currentMotor--;           // Go to previous motor
           motorID = motorList[currentMotor];  // Update selected motor
           displayMotorStatus();       // Display motor status
-        }
-        if(p.y > bot3Y1 && p.y < bot3Y2 && p.x > bot3X1 && p.x < bot3X2){
+          Serial.println("Prev");
+        }else if(buttonsBot[2].justReleased()){
           displayMotorStatus();        // Display motor status
           if(currentMotor < (motorIndex - 1))
             currentMotor++;           // Go to next motor
           motorID = motorList[currentMotor];  // Update selected motor
           displayMotorStatus();       // Display motor status
-        }
-        if(p.y > bot4Y1 && p.y < bot4Y2 && p.x > bot4X1 && p.x < bot4X2){
+          Serial.println("Next");
+        }else if(buttonsBot[3].justReleased()){
           CurrentScreen = 0;
           displayMainScreen();        // Display Main menu
           dxl.ledOff(BROADCAST_ID);   // Turn off all motors LED
+          Serial.println("Back");
         }
         break;
       case 2: /* Register Screen */
-        if(p.y > bot1Y1 && p.y < bot1Y2 && p.x > bot1X1 && p.x < bot1X2){
+        if(buttonsBot[0].justReleased()){
           dxl.writeControlTableItem(currentRegister, motorID, registerData);
           displayRegisterScreen();    // Display Register Screen
           displayMotorStatus();       // Display motor status
-        }
-        if(p.y > bot2Y1 && p.y < bot2Y2 && p.x > bot2X1 && p.x < bot2X2){
+        }else if(buttonsBot[1].justReleased()){
           displayMotorStatus();        // Display motor status
           prevReg();
-        }
-        if(p.y > bot3Y1 && p.y < bot3Y2 && p.x > bot3X1 && p.x < bot3X2){
+        }else if(buttonsBot[2].justReleased()){
           displayMotorStatus();        // Display motor status
           nextReg();
-        }
-        if(p.y > bot4Y1 && p.y < bot4Y2 && p.x > bot4X1 && p.x < bot4X2){
+        }else if(buttonsBot[3].justReleased()){
           CurrentScreen = 0;
           displayMainScreen();        // Display Main menu
           dxl.ledOff(BROADCAST_ID);   // Turn off all motors LED
         }
-        int keyValue = keyboardTouch();
-        //display value typed
+        keyValue = -2;
+        for (uint8_t b=0; b<11; b++) {
+          if (buttonsKey[b].justReleased()) {
+            keyValue = b;
+          }
+        }
         if(keyValue != -2){
           if(keyValue == -1){ // backspace
             registerData = registerData/10;
@@ -233,56 +298,58 @@ void loop(){
           }
           itoa(registerData,motorRegisterStr,10);
           strcpy(motorRegisterBuffer,motorRegisterStr);
-          displayPutStr(motorRegisterBuffer,100,4,2,dataColor,dataBarColor); 
+          displayPutStr(motorRegisterBuffer,4,100,2,dataColor,dataBarColor); 
         }
         break;
       case 3: /* Reset Screen */
-        if(p.y > bot1Y1 && p.y < bot1Y2 && p.x > bot1X1 && p.x < bot1X2){
+        if(buttonsBot[0].justReleased()){
           if(motorIndex > 0){
-            Dynamixelreset(motorID); /*  TO CHANGE  */
-            displayPutStr("Scan to update motor list.",44,12,0,ILI9341_YELLOW ,BACKGROUND);
+            //Dynamixelreset(motorID); /*  TO CHANGE  */
+            displayPutStr("Scan to update motor list.",12,44,0,ILI9341_YELLOW ,BACKGROUND);
             displayRestoreScreen(2);
           }else{
-            displayPutStr("Scan and select motor.    ",44,12,0,ILI9341_YELLOW ,BACKGROUND);
+            displayPutStr("Scan and select motor.    ",12,44,0,ILI9341_YELLOW ,BACKGROUND);
           }
-        }
-        if(p.y > bot2Y1 && p.y < bot2Y2 && p.x > bot2X1 && p.x < bot2X2){
+        }else if(buttonsBot[1].justReleased()){
           displayMotorStatus();        // Display motor status
           if(currentMotor > 0)
             currentMotor--;           // Go to previous motor
           motorID = motorList[currentMotor];  // Update selected motor
           displayMotorStatus();       // Display motor status
-        }
-        if(p.y > bot3Y1 && p.y < bot3Y2 && p.x > bot3X1 && p.x < bot3X2){
+        }else if(buttonsBot[2].justReleased()){
           displayMotorStatus();        // Display motor status
           if(currentMotor < (motorIndex - 1))
             currentMotor++;           // Go to next motor
           motorID = motorList[currentMotor];  // Update selected motor
           displayMotorStatus();       // Display motor status
-        }
-        if(p.y > bot4Y1 && p.y < bot4Y2 && p.x > bot4X1 && p.x < bot4X2){
+        }else if(buttonsBot[3].justReleased()){
           CurrentScreen = 0;
           displayMainScreen();        // Display Main menu
           dxl.ledOff(BROADCAST_ID);   // Turn off all motors LED
         }
         break;
       case 4: /* Config Screen */
-        if(p.y > bot1Y1 && p.y < bot1Y2 && p.x > bot1X1 && p.x < bot1X2){
+        if(buttonsBot[0].justReleased()){
           currentBaudrate++;          // Roll-out Baud Rate
-          if(currentBaudrate > 7)
+          if(currentBaudrate > 14)
             currentBaudrate = 0;
           dxl.begin(configBaudrate[currentBaudrate]); // DynamixelInit different Baud rate
-        }
-        if(p.y > bot2Y1 && p.y < bot2Y2 && p.x > bot2X1 && p.x < bot2X2){
+        }else if(buttonsBot[1].justReleased()){
           protocol++;
           if(protocol > 2)
             protocol = 1;
           dxl.setPortProtocolVersion(protocol);  
-        }
-        if(p.y > bot3Y1 && p.y < bot3Y2 && p.x > bot3X1 && p.x < bot3X2){
+        }else if(buttonsBot[2].justReleased()){
           // DO TOUCH CALIBRATION
-        }
-        if(p.y > bot4Y1 && p.y < bot4Y2 && p.x > bot4X1 && p.x < bot4X2){
+          tft.fillScreen(ILI9341_BLACK);
+          tft.drawCircle(0, 0, 10, ILI9341_WHITE);
+          tft.drawCircle(tft.width(), tft.height(), 10, ILI9341_WHITE);
+          tft.drawCircle(tft.width(), 0, 10, ILI9341_WHITE);
+          tft.drawCircle(0, tft.height(), 10, ILI9341_WHITE);
+          tft.drawCircle(tft.width()/2, tft.height()/2, 10, ILI9341_WHITE);
+          // draw back button
+          // display value
+        }else if(buttonsBot[3].justReleased()){
           CurrentScreen = 0;
           displayMainScreen();        // Display Main menu
           dxl.ledOff(BROADCAST_ID);   // Turn off all motors LED
@@ -296,11 +363,11 @@ void prevReg(){
   if(currentRegister > 0){
     currentRegister--;        // Go to previous register
     // Check if register exist for this model
-    dxl.ControlTableItemInfo_t item_info;
+    /*dxl.ControlTableItemInfo_t item_info;
     item_info = dxl.getControlTableItemInfo(dxl.getModelNumber(motorID), currentRegister);
     if(item_info.addr_length == 0){
       prevReg();
-    }
+    }*/
   }
   dislpayRegister();
 }
@@ -309,26 +376,26 @@ void nextReg(){
   if(currentRegister < 90){
     currentRegister++;        // Go to next register
     // Check if register exist for this model
-    dxl.ControlTableItemInfo_t item_info;
+    /*dxl.ControlTableItemInfo_t item_info;
     item_info = dxl.getControlTableItemInfo(dxl.getModelNumber(motorID), currentRegister);
     if(item_info.addr_length == 0){
       nextReg();
-    }
+    }*/
   }
   dislpayRegister();
 }
 
 void dislpayRegister(){
-  displayPutStr(registerDescription[currentRegister],72,4,0,dataColor,dataBarColor);                  // Display register description
+  displayPutStr(registerDescription[currentRegister],4,72,0,dataColor,dataBarColor);                  // Display register description
   motorRegister = dxl.readControlTableItem(currentRegister, motorID);               // Read motor register
   itoa(motorRegister,motorRegisterStr,10);
   strcpy(motorRegisterBuffer,motorRegisterStr);strcat(motorRegisterBuffer,"     ");
-  displayPutStr(motorRegisterBuffer,90,4,2,dataColor,dataBarColor);                                   // Display Register Value
+  displayPutStr(motorRegisterBuffer,4,90,2,dataColor,dataBarColor);                                   // Display Register Value
   //ItemAndRangeInfo_t item_info;
   //item_info = dxl.getModelDependencyFuncInfo(dxl.getModelNumber(motorID), currentRegister);
   //item_info.min_value
   //item_info.max_value
-  //displayPutStr(item_info.,136,4,0,dataColor,dataBarColor);                   // Display register range
+  //displayPutStr(item_info.,4,136,0,dataColor,dataBarColor);                   // Display register range
 }
 
 void displayMainScreen(){
@@ -336,7 +403,7 @@ void displayMainScreen(){
 	tft.writeRect(0,0,240,32,(uint16_t*)mainMenuTittle);				// Display Main menu title
 	tft.writeRect(0,312,240,8,(uint16_t*)mainButtons);					// Display Main menu buttons
 
-  tft.writeRect(10,64,100,100,(uint16_t*)mainButtons);
+  tft.writeRect(10,64,100,100,(uint16_t*)scanButton);
   tft.writeRect(130,64,100,100,(uint16_t*)registersButton);
   tft.writeRect(10,184,100,100,(uint16_t*)resetButton);
   tft.writeRect(130,184,100,100,(uint16_t*)configButton);
@@ -349,25 +416,25 @@ void displayScanScreen(){
 	tft.fillScreen(BACKGROUND);		// Clear screen
 	tft.writeRect(0,0,240,32,(uint16_t*)scanSelect);				// Screen title Scan/Select Motors
 
-	tft.fillRect(64,0,240,4,BACKGROUND);		// Clear Progress Bar
+	tft.fillRect(0,64,240,4,BACKGROUND);		// Clear Progress Bar
 
-	tft.fillRect(68,0,240,64+6,dataBarColor);
-  displayPutStr("Position",72,4,0,dataColor,dataBarColor);
-	displayPutStr("---*",90,10,2,dataColor,dataBarColor);
-	displayPutStr("MIN ---*",88,MINMAXVAL,0,dataColor,dataBarColor);
-	displayPutStr("MAX ---*",108,MINMAXVAL,0,dataColor,dataBarColor);
+	tft.fillRect(0,68,240,64+6,dataBarColor);
+  displayPutStr("Position",4,72,0,dataColor,dataBarColor);
+	displayPutStr("---*",10,90,2,dataColor,dataBarColor);
+	displayPutStr("MIN ---*",MINMAXVAL,88,0,dataColor,dataBarColor);
+	displayPutStr("MAX ---*",MINMAXVAL,108,0,dataColor,dataBarColor);
 
-	tft.fillRect(140,0,240,64+6,dataBarColor);
-	displayPutStr("Voltage",144,4,0,dataColor,dataBarColor);
-	displayPutStr("-.-v  ",162,10,2,dataColor,dataBarColor);
-	displayPutStr("MIN -.-v",160,MINMAXVAL,0,dataColor,dataBarColor);
-	displayPutStr("MAX -.-v",180,MINMAXVAL,0,dataColor,dataBarColor);
+	tft.fillRect(0,140,240,64+6,dataBarColor);
+	displayPutStr("Voltage",4,144,0,dataColor,dataBarColor);
+	displayPutStr("-.-v  ",10,162,2,dataColor,dataBarColor);
+	displayPutStr("MIN -.-v",MINMAXVAL,160,0,dataColor,dataBarColor);
+	displayPutStr("MAX -.-v",MINMAXVAL,180,0,dataColor,dataBarColor);
 
-	tft.fillRect(212,0,240,64+6,dataBarColor);
-	displayPutStr("Temperature",216,4,0,dataColor,dataBarColor);
-	displayPutStr("--*C",234,10,2,dataColor,dataBarColor);
-	displayPutStr("MIN --*C",232,MINMAXVAL,0,dataColor,dataBarColor);
-	displayPutStr("MAX --*C",252,MINMAXVAL,0,dataColor,dataBarColor);
+	tft.fillRect(0,212,240,64+6,dataBarColor);
+	displayPutStr("Temperature",4,216,0,dataColor,dataBarColor);
+	displayPutStr("--*C",10,234,2,dataColor,dataBarColor);
+	displayPutStr("MIN --*C",MINMAXVAL,232,0,dataColor,dataBarColor);
+	displayPutStr("MAX --*C",MINMAXVAL,252,0,dataColor,dataBarColor);
 
 	tft.writeRect(0,288,240,32,(uint16_t*)mainMenu);			// scan/select Menu
 }
@@ -379,15 +446,15 @@ void displayRegisterScreen(){
 
 	lockStatus = dxl.getTorqueEnableStat(motorID);
 	if(lockStatus == 0){
-		tft.writeRect(216,38,22,22,(uint16_t*)unlocked);					// unlocked position
+		tft.writeRect(38,216,22,22,(uint16_t*)unlocked);					// unlocked position
 	}else{
-		tft.writeRect(216,38,22,22,(uint16_t*)locked);					// locked position
+		tft.writeRect(38,216,22,22,(uint16_t*)locked);					// locked position
 	}
 
-	tft.fillRect(68,0,240,86,dataBarColor);	// Register data and description bar
-	displayPutStr("Add: ---, Motor register     ",72,4,0,dataColor,dataBarColor);
-	displayPutStr("---   ",90,4,2,dataColor,dataBarColor);
-	displayPutStr("Range: --- to ---.           ",136,4,0,dataColor,dataBarColor);
+	tft.fillRect(0,68,240,86,dataBarColor);	// Register data and description bar
+	displayPutStr("Add: ---, Motor register     ",4,72,0,dataColor,dataBarColor);
+	displayPutStr("---   ",4,90,2,dataColor,dataBarColor);
+	displayPutStr("Range: --- to ---.           ",4,136,0,dataColor,dataBarColor);
 
 	tft.writeRect(0,158,240,126,(uint16_t*)keyboard);					// Display keyboard
 
@@ -399,32 +466,32 @@ void displayRestoreScreen(unsigned char option){
 		tft.fillScreen(BACKGROUND);		// Clear screen
 		tft.writeRect(0,0,240,32,(uint16_t*)factoryReset);				// Screen title Restore default
 
-		tft.fillRect(68,0,240,212,dataBarColor);
-		displayPutStr("Restore motor configurations",72,4,0,dataColor,dataBarColor);
-		displayPutStr("to ",72+14,4,0,dataColor,dataBarColor);
-		displayPutStr("Factory Default",72+14,4+24,0,ILI9341_ORANGE ,dataBarColor);
-		displayPutStr("?",72+14,4+(8*18),0,dataColor,dataBarColor);
+		tft.fillRect(0,68,240,212,dataBarColor);
+		displayPutStr("Restore motor configurations",4,72,0,dataColor,dataBarColor);
+		displayPutStr("to ",4,72+14,0,dataColor,dataBarColor);
+		displayPutStr("Factory Default",4+24,72+14,0,ILI9341_ORANGE ,dataBarColor);
+		displayPutStr("?",4+(8*18),72+14,0,dataColor,dataBarColor);
 
-		displayPutStr("/// Warning /////////////////",116,4,0,ILI9341_WHITE ,ILI9341_RED );
-		displayPutStr("This will set the ID to 1    ",136,4,0,dataColor,dataBarColor);
-		displayPutStr("and Baud Rate to 1Mbps.      ",150,4,0,dataColor,dataBarColor);
+		displayPutStr("/// Warning /////////////////",4,116,0,ILI9341_WHITE ,ILI9341_RED );
+		displayPutStr("This will set the ID to 1    ",4,136,0,dataColor,dataBarColor);
+		displayPutStr("and Baud Rate to 1Mbps.      ",4,150,0,dataColor,dataBarColor);
 
-		displayPutStr("Please avoid using identical ",176,4,0,dataColor,dataBarColor);
-		displayPutStr("ID for multiple Motors.      ",192,4,0,dataColor,dataBarColor);
-		displayPutStr("You may face communication   ",206,4,0,dataColor,dataBarColor);
-		displayPutStr("failure or may not be able to",220,4,0,dataColor,dataBarColor);
-		displayPutStr("detect Motors with same ID.  ",234,4,0,dataColor,dataBarColor);
-		displayPutStr("/////////////////////////////",256,4,0,ILI9341_WHITE ,ILI9341_RED );
+		displayPutStr("Please avoid using identical ",4,176,0,dataColor,dataBarColor);
+		displayPutStr("ID for multiple Motors.      ",4,192,0,dataColor,dataBarColor);
+		displayPutStr("You may face communication   ",4,206,0,dataColor,dataBarColor);
+		displayPutStr("failure or may not be able to",4,220,0,dataColor,dataBarColor);
+		displayPutStr("detect Motors with same ID.  ",4,234,0,dataColor,dataBarColor);
+		displayPutStr("/////////////////////////////",4,256,0,ILI9341_WHITE ,ILI9341_RED );
 
 		tft.writeRect(0,288,240,32,(uint16_t*)resetMenu);
 	}else if (option == 2){
-		tft.fillRect(68,0,240,212,dataBarColor);
-		displayPutStr("Restore motor configurations",72,4,0,dataColor,dataBarColor);
-		displayPutStr("to ",72+14,4,0,dataColor,dataBarColor);
-		displayPutStr("Factory Default",72+14,4+24,0,ILI9341_ORANGE,dataBarColor);
-		displayPutStr("?",72+14,4+(8*18),0,dataColor,dataBarColor);
-		tft.writeRect(58,120,124,124,(uint16_t*)resetOK);
-		displayPutStr("          Reset OK!         ",252,4,0,dataColor,dataBarColor);
+		tft.fillRect(0,68,240,212,dataBarColor);
+		displayPutStr("Restore motor configurations",4,72,0,dataColor,dataBarColor);
+		displayPutStr("to ",4,72+14,0,dataColor,dataBarColor);
+		displayPutStr("Factory Default",4+24,72+14,0,ILI9341_ORANGE,dataBarColor);
+		displayPutStr("?",4+(8*18),72+14,0,dataColor,dataBarColor);
+		tft.writeRect(120,58,124,124,(uint16_t*)resetOK);
+		displayPutStr("          Reset OK!         ",4,252,0,dataColor,dataBarColor);
 	}
 }
 
@@ -434,24 +501,24 @@ void displayConfigScreen(){
 
 	tft.writeRect(0,32,240,60,(uint16_t*)smartMotorLogo);
 
-	tft.fillRect(94,0,240,70,dataBarColor);
-	tft.fillRect(94,0,2,70,ILI9341_BLUE );
-	displayPutStr("Baud Rate (bps)",98,8,0,dataColor,dataBarColor);
+	tft.fillRect(0,94,240,70,dataBarColor);
+	tft.fillRect(0,94,2,70,ILI9341_BLUE );
+	displayPutStr("Baud Rate (bps)",8,98,0,dataColor,dataBarColor);
 
-	tft.fillRect(170,0,240,70,dataBarColor);
-	tft.fillRect(170,0,2,70,ILI9341_YELLOW);
-	displayPutStr("Protocol",174,8,0,dataColor,dataBarColor);
+	tft.fillRect(0,170,240,70,dataBarColor);
+	tft.fillRect(0,170,2,70,ILI9341_YELLOW);
+	displayPutStr("Protocol",8,174,0,dataColor,dataBarColor);
 
-	tft.fillRect(248,0,240,32,dataBarColor);
-	tft.fillRect(248,0,2,32,ILI9341_ORANGE);
-	displayPutStr("TouchScreen Calibration",256,8,0,dataColor,dataBarColor);
+	tft.fillRect(0,248,240,32,dataBarColor);
+	tft.fillRect(0,248,2,32,ILI9341_ORANGE);
+	displayPutStr("TouchScreen Calibration",8,256,0,dataColor,dataBarColor);
 
 	tft.writeRect(0,288,240,32,(uint16_t*)configMenu);
 }
 
 void displayMotorStatus(){
 	if(motorIndex > 0){
-		tft.fillRect(48,2,6,6,ILI9341_GREEN);				// Online Motor
+		tft.fillRect(2,48,6,6,ILI9341_GREEN);				// Online Motor
 		itoa((currentMotor+1),currentMotorStr,10);
 		itoa(motorIndex,motorIndexStr,10);
 		itoa(motorID,motorIDStr,10);
@@ -459,58 +526,74 @@ void displayMotorStatus(){
 		strcpy(statusBuffer,"Motor ");strcat(statusBuffer,currentMotorStr);
 		strcat(statusBuffer," of ");strcat(statusBuffer,motorIndexStr);
 		strcat(statusBuffer,", ID: ");strcat(statusBuffer,motorIDStr);
-		displayPutStr(statusBuffer,44,12,0,ILI9341_WHITE,BACKGROUND);
+		displayPutStr(statusBuffer,12,44,0,ILI9341_WHITE,BACKGROUND);
 	}else{
-		tft.fillRect(48,2,6,6,ILI9341_RED);				// Online Motor
-		displayPutStr("No motors detected! ",44,12,0,ILI9341_RED,BACKGROUND);
+		tft.fillRect(2,48,6,6,ILI9341_RED);				// Offline Motor
+		displayPutStr("No motors detected! ",12,44,0,ILI9341_RED,BACKGROUND);
 	}
 }
 
 void displayScanMotors(){
-	tft.fillRect(38,0,200,20,BACKGROUND);					// Clear status bar
-	tft.fillRect(64,0,240,4,BACKGROUND);					// Clear search bar
-	tft.fillRect(48,2,6,6,ILI9341_BLUE);							// Search Motor
-	displayPutStr("Scanning motors...    ",44,12,0,ILI9341_WHITE,BACKGROUND);
+	tft.fillRect(0,38,200,20,BACKGROUND);					// Clear status bar
+	tft.fillRect(0,64,240,4,BACKGROUND);					// Clear search bar
+	tft.fillRect(2,48,6,6,ILI9341_BLUE);							// Search Motor
+	displayPutStr("Scanning motors...    ",12,44,0,ILI9341_WHITE,BACKGROUND);
 	motorIndex = 0;
 	currentMotor = 0;
 	for(motorID = 0; motorID < 254; motorID++){
 		motorList[motorID] = 0;
 	}
-	for(motorID = 0; motorID < 254; motorID++){
+  for(currentBaudrate = 0; currentBaudrate < 14; currentBaudrate++) {
+      // Set Port baudrate.
+      Serial.print("SCAN BAUDRATE ");
+      Serial.println(configBaudrate[currentBaudrate]);
+      dxl.begin(configBaudrate[currentBaudrate]);
+      for(int id = 0; id < DXL_BROADCAST_ID; id++) {
+        //iterate until all ID in each buadrate is scanned.
+        if(dxl.ping(id)) {
+          Serial.print("ID : ");
+          Serial.print(id);
+          Serial.print(", Model Number: ");
+          Serial.println(dxl.getModelNumber(id));
+          motorList[motorIndex++] = motorID;
+        }
+      }
+    }
+	/*for(motorID = 0; motorID < 254; motorID++){
 		if(dxl.ping(motorID)){
 			motorList[motorIndex++] = motorID;
 		}
-		tft.fillRect(64,0,((motorID*240)/253),4,ILI9341_GREEN);		// Progress Bar
-	}
-	tft.fillRect(38,0,200,20,BACKGROUND);					// Clear status bar
-	tft.fillRect(64,0,240,4,BACKGROUND);					// Clear search bar
+		tft.fillRect(0,64,((motorID*240)/253),4,ILI9341_GREEN);		// Progress Bar
+	}*/
+	tft.fillRect(0,38,200,20,BACKGROUND);					// Clear status bar
+	tft.fillRect(0,64,240,4,BACKGROUND);					// Clear search bar
 	if(motorIndex > 0){
 		motorID = motorList[currentMotor];
-		tft.fillRect(48,2,6,6,ILI9341_GREEN);				// Online Motor
+		tft.fillRect(2,48,6,6,ILI9341_GREEN);				// Online Motor
 		itoa((currentMotor+1),currentMotorStr,10);
 		itoa(motorIndex,motorIndexStr,10);
 		itoa(motorID,motorIDStr,10);
 		strcpy(statusBuffer,"Motor ");strcat(statusBuffer,currentMotorStr);
 		strcat(statusBuffer," of ");strcat(statusBuffer,motorIndexStr);
 		strcat(statusBuffer,", ID: ");strcat(statusBuffer,motorIDStr);
-		displayPutStr(statusBuffer,44,12,0,ILI9341_WHITE,BACKGROUND);
+		displayPutStr(statusBuffer,12,44,0,ILI9341_WHITE,BACKGROUND);
 
     dxl.ledOff(BROADCAST_ID);   // Turn off all motors LED
 		dxl.ledOn(motorID);         // Turn on the current motor LED
 		dxl.torqueOff(motorID);			// Unlock motor
    
 	}else{
-		tft.fillRect(48,2,6,6,ILI9341_RED);				// Online Motor
-		displayPutStr("No motors detected! ",44,12,0,ILI9341_RED,BACKGROUND);
+		tft.fillRect(2,48,6,6,ILI9341_RED);				// Online Motor
+		displayPutStr("No motors detected! ",12,44,0,ILI9341_RED,BACKGROUND);
 	}
 
 }
 
 void motorPing(int motorIndex){
   if(dxl.ping(motorID)){            // Update motor status
-    tft.fillRect(48,2,6,6,ILI9341_GREEN);       // Online Motor
+    tft.fillRect(2,48,6,6,ILI9341_GREEN);       // Online Motor
   }else{
-    tft.fillRect(48,2,6,6,ILI9341_RED);         // Off-line Motor
+    tft.fillRect(2,48,6,6,ILI9341_RED);         // Off-line Motor
   }
 }
 
@@ -524,17 +607,17 @@ void displayMotorInfo(int motorIndex){
   motorRegister = dxl.getPresentPosition(motorID, UNIT_DEGREE);       // Read motor position
   itoa(motorRegister,motorRegisterStr,10);
   strcpy(motorRegisterBuffer,motorRegisterStr);strcat(motorRegisterBuffer,"*  ");
-  displayPutStr(motorRegisterBuffer,98-8,10,2,dataColor,dataBarColor);
+  displayPutStr(motorRegisterBuffer,10,98-8,2,dataColor,dataBarColor);
   
   motorRegister = dxl.readControlTableItem(MIN_POSITION_LIMIT, motorID);      // Read motor CW Angle Limit
   itoa(motorRegister,motorRegisterStr,10);
   strcpy(motorRegisterBuffer,"MIN ");strcat(motorRegisterBuffer,motorRegisterStr);strcat(motorRegisterBuffer,"*   ");
-  displayPutStr(motorRegisterBuffer,88,MINMAXVAL,0,dataColor,dataBarColor);
+  displayPutStr(motorRegisterBuffer,MINMAXVAL,88,0,dataColor,dataBarColor);
   
   motorRegister = dxl.readControlTableItem(MAX_POSITION_LIMIT, motorID);      // Read motor CCW Angle Limit
   itoa(motorRegister,motorRegisterStr,10);
   strcpy(motorRegisterBuffer,"MAX ");strcat(motorRegisterBuffer,motorRegisterStr);strcat(motorRegisterBuffer,"*   ");
-  displayPutStr(motorRegisterBuffer,108,MINMAXVAL,0,dataColor,dataBarColor);
+  displayPutStr(motorRegisterBuffer,MINMAXVAL,108,0,dataColor,dataBarColor);
   
   motorRegister = dxl.readControlTableItem(PRESENT_VOLTAGE, motorID);      // Read motor voltage
   motorRegisterDecimals = motorRegister - ((motorRegister/10)*10);
@@ -542,7 +625,7 @@ void displayMotorInfo(int motorIndex){
   itoa((motorRegister/10),motorRegisterStr,10);
   strcpy(motorRegisterBuffer,motorRegisterStr);strcat(motorRegisterBuffer,".");
   strcat(motorRegisterBuffer,motorRegisterDecimalsStr);strcat(motorRegisterBuffer,"v ");
-  displayPutStr(motorRegisterBuffer,170-8,10,2,dataColor,dataBarColor);
+  displayPutStr(motorRegisterBuffer,10,170-8,2,dataColor,dataBarColor);
   
   motorRegister = dxl.readControlTableItem(MIN_VOLTAGE_LIMIT, motorID);      // Read motor minimum voltage limit
   motorRegisterDecimals = motorRegister - ((motorRegister/10)*10);
@@ -550,7 +633,7 @@ void displayMotorInfo(int motorIndex){
   itoa(motorRegister/10,motorRegisterStr,10);
   strcpy(motorRegisterBuffer,"MIN ");strcat(motorRegisterBuffer,motorRegisterStr);strcat(motorRegisterBuffer,".");
   strcat(motorRegisterBuffer,motorRegisterDecimalsStr);strcat(motorRegisterBuffer,"v ");
-  displayPutStr(motorRegisterBuffer,160,MINMAXVAL,0,dataColor,dataBarColor);
+  displayPutStr(motorRegisterBuffer,MINMAXVAL,160,0,dataColor,dataBarColor);
   
   motorRegister = dxl.readControlTableItem(MAX_VOLTAGE_LIMIT, motorID);      // Read motor maximum voltage limit
   motorRegisterDecimals = motorRegister - ((motorRegister/10)*10);
@@ -558,18 +641,18 @@ void displayMotorInfo(int motorIndex){
   itoa(motorRegister/10,motorRegisterStr,10);
   strcpy(motorRegisterBuffer,"MAX ");strcat(motorRegisterBuffer,motorRegisterStr);strcat(motorRegisterBuffer,".");
   strcat(motorRegisterBuffer,motorRegisterDecimalsStr);strcat(motorRegisterBuffer,"v ");
-  displayPutStr(motorRegisterBuffer,180,MINMAXVAL,0,dataColor,dataBarColor);
+  displayPutStr(motorRegisterBuffer,MINMAXVAL,180,0,dataColor,dataBarColor);
   
   motorRegister = dxl.readControlTableItem(PRESENT_TEMPERATURE, motorID);      // Read motor temperature
   itoa(motorRegister,motorRegisterStr,10);
   strcpy(motorRegisterBuffer,motorRegisterStr);strcat(motorRegisterBuffer,"*C  ");
-  displayPutStr(motorRegisterBuffer,242-8,10,2,dataColor,dataBarColor); //242
+  displayPutStr(motorRegisterBuffer,10,242-8,2,dataColor,dataBarColor); //242
   
   motorRegister = dxl.readControlTableItem(TEMPERATURE_LIMIT, motorID);      // Read motor MAX Temperature Limit
   itoa(motorRegister,motorRegisterStr,10);
   strcpy(motorRegisterBuffer,"MAX ");strcat(motorRegisterBuffer,motorRegisterStr);strcat(motorRegisterBuffer,"*C  ");
-  displayPutStr("MIN --*C ",232,MINMAXVAL,0,dataColor,dataBarColor);
-  displayPutStr(motorRegisterBuffer,252,MINMAXVAL,0,dataColor,dataBarColor);
+  displayPutStr("MIN --*C ",MINMAXVAL,232,0,dataColor,dataBarColor);
+  displayPutStr(motorRegisterBuffer,MINMAXVAL,252,0,dataColor,dataBarColor);
 }
 
 void displayPutStr(const char *pString, uint16_t x, uint16_t y, uint8_t Size, uint16_t fColor, uint16_t bColor) {
@@ -577,43 +660,6 @@ void displayPutStr(const char *pString, uint16_t x, uint16_t y, uint8_t Size, ui
   tft.setTextColor(fColor,bColor);
   tft.setTextSize(Size);
   tft.println(pString);
-}
-
-int keyboardTouch(){
-  if(p.y > 255 && p.y < 280 && p.x > 80 && p.x < 160){
-    return 0;
-  }
-  if(p.y > 160 && p.y < 190 && p.x > 0 && p.x < 80){
-    return 1;
-  }
-  if(p.y > 160 && p.y < 190 && p.x > 80 && p.x < 160){
-    return 2;
-  }
-  if(p.y > 160 && p.y < 190 && p.x > 160 && p.x < 240){
-    return 3;
-  }
-  if(p.y > 190 && p.y < 220 && p.x > 0 && p.x < 80){
-    return 4;
-  }
-  if(p.y > 190 && p.y < 220 && p.x > 80 && p.x < 160){
-    return 5;
-  }
-  if(p.y > 190 && p.y < 220 && p.x > 160 && p.x < 240){
-    return 6;
-  }
-  if(p.y > 220 && p.y < 255 && p.x > 0 && p.x < 80){
-    return 7;
-  }
-  if(p.y > 220 && p.y < 255 && p.x > 80 && p.x < 160){
-    return 8;
-  }
-  if(p.y > 220 && p.y < 255 && p.x > 160 && p.x < 240){
-    return 9;
-  }
-  if(p.y > 255 && p.y < 280 && p.x > 160 && p.x < 240){
-    return -1; // backspace
-  }
-  return -2; //nothing
 }
 
 void checkModel(int motorID){
